@@ -1,0 +1,8 @@
+# internal data
+__pycache__
+
+# vscode
+.vscode
+
+# large data
+data

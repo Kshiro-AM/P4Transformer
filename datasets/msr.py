@@ -13,7 +13,10 @@ class MSRAction3D(Dataset):
         index = 0
         for video_name in os.listdir(root):
             if train and (int(video_name.split('_')[1].split('s')[1]) <= 5):
-                video = np.load(os.path.join(root, video_name), allow_pickle=True)['point_clouds']
+                npzfile = np.load(os.path.join(root, video_name), allow_pickle=True)
+                
+                video = npzfile['point_clouds']
+                #video = np.load(os.path.join(root, video_name), allow_pickle=True)['point_clouds']
                 self.videos.append(video)
                 label = int(video_name.split('_')[0][1:])-1
                 self.labels.append(label)
@@ -71,7 +74,7 @@ class MSRAction3D(Dataset):
         return clip.astype(np.float32), label, index
 
 if __name__ == '__main__':
-    dataset = MSRAction(root='../data/msr_action', frames_per_clip=16)
+    dataset = MSRAction3D(root='../data/msr_action', frames_per_clip=16)
     clip, label, video_idx = dataset[0]
     print(clip)
     print(label)

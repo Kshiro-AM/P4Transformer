@@ -188,6 +188,7 @@ def main(args):
         acc = max(acc, evaluate(model, criterion, data_loader_test, device=device))
 
         if args.output_dir:
+            output_dir = args.output_dir
             checkpoint = {
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
