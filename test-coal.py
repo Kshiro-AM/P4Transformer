@@ -16,10 +16,10 @@ import utils
 
 from scheduler import WarmupMultiStepLR
 
-from datasets.synthia import *
-import models.synthia as Models
+from datasets.coal import *
+import models.coal as Models
 
-def save_ply(points, colors, filename):
+def save_ply(points, colors, filename, pred):
     with open(filename, 'w') as f:
         f.write('ply\n')
         f.write('format ascii 1.0\n')
@@ -30,117 +30,38 @@ def save_ply(points, colors, filename):
         f.write('property uchar red\n')
         f.write('property uchar green\n')
         f.write('property uchar blue\n')
+        f.write('property int class\n')
         f.write('end_header\n')
         for i in range(points.shape[0]):
-            f.write('%f %f %f %d %d %d\n' % (points[i, 0], points[i, 1], points[i, 2], colors[i][0], colors[i][1], colors[i][2]))
-
-def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, device, epoch, print_freq):
-    model.train()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
-
-    header = 'Epoch: [{}]'.format(epoch)
-    for pc1, rgb1, label1, mask1, pc2, rgb2, label2, mask2 in metric_logger.log_every(data_loader, print_freq, header):
-        start_time = time.time()
-
-        pc1, rgb1, label1, mask1 = pc1.to(device), rgb1.to(device), label1.to(device), mask1.to(device)
-        output1 = model(pc1, rgb1).transpose(1, 2)
-        loss1 = criterion(output1, label1)*mask1
-        loss1 = torch.sum(loss1) / (torch.sum(mask1) + 1)
-        optimizer.zero_grad()
-        loss1.backward()
-        optimizer.step()
-
-        pc2, rgb2, label2, mask2 = pc2.to(device), rgb2.to(device), label2.to(device), mask2.to(device)
-        output2 = model(pc2, rgb2).transpose(1, 2)
-        loss2 = criterion(output2, label2)*mask1
-        loss2 = torch.sum(loss2) / (torch.sum(mask2) + 1)
-        optimizer.zero_grad()
-        loss2.backward()
-        optimizer.step()
-
-        metric_logger.update(loss=(loss1.item()+loss2.item())/2.0, lr=optimizer.param_groups[0]["lr"])
-        lr_scheduler.step()
-        sys.stdout.flush()
+            f.write('%f %f %f %d %d %d %d\n' % (points[i, 0], points[i, 1], points[i, 2], colors[i][0], colors[i][1], colors[i][2], pred[i]))
 
 def evaluate(model, criterion, data_loader, device, print_freq, output_dir=None):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
-    total_loss = 0
-    total_correct = 0
-    total_seen = 0
-    total_pred_class = [0] * 12
-    total_correct_class = [0] * 12
-    total_class = [0] * 12
 
     with torch.no_grad():
         i = 0
-        for pc1, rgb1, label1, mask1, pc2, rgb2, label2, mask2 in metric_logger.log_every(data_loader, print_freq, header):
-            pc1, rgb1 = pc1.to(device), rgb1.to(device)
-            output1 = model(pc1, rgb1).transpose(1, 2)
-            loss1 = criterion(output1, label1.to(device))*mask1.to(device)
-            loss1 = torch.sum(loss1) / (torch.sum(mask1.to(device)) + 1)
-            label1, mask1 = label1.numpy().astype(np.int32), mask1.numpy().astype(np.int32)
+        color = []
+        for j in range(20):
+            color.append(np.random.randint(0, 255, 3))
+            
+        for pc, rgb, index in metric_logger.log_every(data_loader, print_freq, header):
+            
+            pc, rgb = pc.to(device), rgb.to(device)
+            output1 = model(pc, rgb).transpose(1, 2)
             output1 = output1.cpu().numpy()
             pred1 = np.argmax(output1, 1) # BxTxN
-            correct1 = np.sum((pred1 == label1) * mask1)
-            total_correct += correct1
-            total_seen += np.sum(mask1)
-            for c in range(12):
-                total_pred_class[c] += np.sum(((pred1==c) | (label1==c)) & mask1)
-                total_correct_class[c] += np.sum((pred1==c) & (label1==c) & mask1)
-                total_class[c] += np.sum((label1==c) & mask1)
                 
-            color = []
-            for j in range(pred1.max()+1):
-                color.append(np.random.randint(0, 255, 3))
-                
-            
-            for j in range(pc1.shape[0]):
-                for k in range(pc1.shape[1]):
-                    file_name = os.path.join(output_dir, 'batch{}_{}_time{}.ply'.format(i, j, k))
-                    abc = [color[idx] for idx in pred1[j][k][:]]
-                    save_ply(pc1[j][k][:][:].cpu().numpy(), abc, file_name)
+            for j in range(pc.shape[0]):
+                for k in range(pc.shape[1]):
+                    file_name = os.path.join(output_dir, 'index{}_batch{}_{}_time{}.ply'.format(str(index[j].detach().numpy()).zfill(4), i, j, k))
+                    c = [color[idx] for idx in pred1[j][k][:]]
+                    save_ply(pc[j][k][:][:].cpu().numpy(), c, file_name, pred=pred1[j][k][:])
 
-            pc2, rgb2 = pc2.to(device), rgb2.to(device)
-            output2 = model(pc2, rgb2).transpose(1, 2)
-            loss2 = criterion(output2, label2.to(device))*mask2.to(device)
-            loss2 = torch.sum(loss2) / (torch.sum(mask2.to(device)) + 1)
-            label2, mask2 = label2.numpy().astype(np.int32), mask2.numpy().astype(np.int32)
-            output2 = output2.cpu().numpy()
-            pred2 = np.argmax(output2, 1) # BxTxN
-            correct2 = np.sum((pred2 == label2) * mask2)
-            total_correct += correct2
-            total_seen += np.sum(mask2)
-            for c in range(12):
-                total_pred_class[c] += np.sum(((pred2==c) | (label2==c)) & mask2)
-                total_correct_class[c] += np.sum((pred2==c) & (label2==c) & mask2)
-                total_class[c] += np.sum((label2==c) & mask2)
-
-            metric_logger.update(loss=(loss1.item()+loss2.item())/2.0)
             i += 1
 
-    ACCs = []
-    for c in range(12):
-        acc = total_correct_class[c] / float(total_class[c])
-        if total_class[c] == 0:
-            acc = 0
-        print('eval acc of %s:\t %f'%(index_to_class[label_to_index[c]], acc))
-        ACCs.append(acc)
-    print(' * Eval accuracy: %f'% (np.mean(np.array(ACCs))))
-
-    IoUs = []
-    for c in range(12):
-        iou = total_correct_class[c] / float(total_pred_class[c])
-        if total_pred_class[c] == 0:
-            iou = 0
-        print('eval mIoU of %s:\t %f'%(index_to_class[label_to_index[c]], iou))
-        IoUs.append(iou)
-    print(' * Eval mIoU:\t %f'%(np.mean(np.array(IoUs))))
-
 def main(args):
-
     if args.output_dir:
         utils.mkdir(args.output_dir)
 
@@ -161,40 +82,27 @@ def main(args):
 
     st = time.time()
 
-    dataset = SegDataset(
+    dataset = CoalDataset(
             root=args.data_path,
             meta=args.data_train,
-            labelweight=args.label_weight,
             frames_per_clip=args.clip_len,
             num_points=args.num_points,
             train=True
-    )
-
-    dataset_test = SegDataset(
-            root=args.data_path,
-            meta=args.data_eval,
-            labelweight=args.label_weight,
-            frames_per_clip=args.clip_len,
-            num_points=args.num_points,
-            train=False
     )
 
     print("Creating data loaders")
 
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
 
-    data_loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=args.batch_size, num_workers=args.workers, pin_memory=True)
-
     print("Creating model")
     
     Model = getattr(Models, args.model)
-    model = Model(radius=args.radius, nsamples=args.nsamples, num_classes=12)
+    model = Model(radius=args.radius, nsamples=args.nsamples, num_classes=2)
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
 
-    criterion_train = nn.CrossEntropyLoss(weight=torch.from_numpy(dataset.labelweights).to(device), reduction='none')
-    criterion_test = nn.CrossEntropyLoss(weight=torch.from_numpy(dataset_test.labelweights).to(device), reduction='none')
+    # criterion_test = nn.CrossEntropyLoss(weight=torch.from_numpy(dataset_test.labelweights).to(device), reduction='none')
 
     lr = args.lr
     optimizer = torch.optim.SGD(
@@ -219,12 +127,11 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
-        train_one_epoch(model, criterion_train, optimizer, lr_scheduler, data_loader, device, epoch, args.print_freq)
+    for epoch in range(1):
 
         if args.output_dir:
             output_dir = args.output_dir
-        evaluate(model, criterion_test, data_loader_test, device=device, print_freq=args.print_freq, output_dir=output_dir)
+        evaluate(model, None, data_loader, device=device, print_freq=args.print_freq, output_dir=output_dir)
 
         if args.output_dir:
             output_dir = args.output_dir

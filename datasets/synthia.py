@@ -191,3 +191,5 @@ class SegDataset(Dataset):
 
         return pc1.astype(np.float32), rgb1.astype(np.float32), label1.astype(np.int64), mask1.astype(np.float32), pc2.astype(np.float32), rgb2.astype(np.float32), label2.astype(np.int64), mask2.astype(np.float32)
 
+if __name__ == '__main__':
+    dataset = SegDataset(root='/mnt/d/Synthia4D', frames_per_clip=16)
