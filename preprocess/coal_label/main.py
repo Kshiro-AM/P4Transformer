@@ -119,19 +119,20 @@ def main():
     file_list = get_all_files(dir)
     file_list.sort()
     
+    point_size = 16384
     
-    pc = np.zeros(shape=[len(file_list), 8192, 3]) # frame, point size, xyz
-    label = np.zeros(shape=[len(file_list), 8192], dtype=np.int32) # frame, point size
+    pc = np.zeros(shape=[len(file_list), point_size, 3]) # frame, point size, xyz
+    label = np.zeros(shape=[len(file_list), point_size], dtype=np.int32) # frame, point size
     for i, file in enumerate(file_list):
         print('Processing: ', file)
         header, cloud = read_ply_ascii(file)
         
         # with downsample
         length = len(cloud.point.positions)
-        if np.asarray(cloud.point.positions).shape[0] > 8192:
+        if np.asarray(cloud.point.positions).shape[0] > point_size:
             arr = cloud.point.positions.cpu().numpy()
-            idxs = farthest_point_sampling(arr, 8192)
-            length = 8192
+            idxs = farthest_point_sampling(arr, point_size)
+            length = point_size
         else:
             idxs = np.arange(length)
             

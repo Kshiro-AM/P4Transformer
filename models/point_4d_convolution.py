@@ -269,3 +269,13 @@ class P4DTransConv(nn.Module):
         new_features = torch.stack(tensors=new_features, dim=1)
 
         return new_xyzs, new_features
+
+class TemplateNet(nn.Module):
+    def __init__(self):
+        
+        super().__init__()
+        
+    def forward(self, templates_clouds: torch.Tensor, frame_features: torch.Tensor) -> torch.Tensor:
+        
+        pass
+        

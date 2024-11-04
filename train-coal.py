@@ -46,7 +46,7 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
         pc1, rgb1, label1 = pc1.to(device), rgb1.to(device), label1.to(device)
         output1 = model(pc1, rgb1).transpose(1, 2)
         loss1 = criterion(output1, label1)
-        weight = (-label1 + 1) * 39.0 + 1 # 40:1
+        weight = (-label1 + 1) * 79.0 + 1 # 40:1
         loss1 = torch.sum(loss1 * weight) / (label1.shape[0] * label1.shape[1] * label1.shape[2])
         optimizer.zero_grad() 
         loss1.backward()

@@ -4,11 +4,6 @@ from enum import Enum
 
 import open3d as o3d
 
-
-class DatasetType(Enum):
-    train = 0
-    test = 1
-
 def get_all_files(dir_path):
     file_list = []
     for root, dirs, files in os.walk(dir_path):
@@ -41,23 +36,21 @@ def read_ply_ascii(ply_file):
                 break
         
         pc = []
-        label = []
         while True:
             line = f.readline()
             if not line:
                 break
             p = line.split()
             pc.append([ float(p[propertyDict['x']]), float(p[propertyDict['y']]), float(p[propertyDict['z']]) ])
-            label.append(int(float(p[propertyDict['scalar_Original_cloud_index']])))
             
-        return header, np.array(pc, dtype=np.float32), np.array(label, dtype=np.int32)
+        return header, np.array(pc, dtype=np.float32)
 
 def main():
-    dir = '../../data/lidar_pcd'
+    dir = '../../data/coal_template'
     file_list = get_all_files(dir)
     file_list.sort()
     
-    point_size = 16384
+    point_size = 2048
     
     pc = np.zeros(shape=[len(file_list), point_size, 3]) # frame, point size, xyz
     label = np.zeros(shape=[len(file_list), point_size], dtype=np.int32) # frame, point size
@@ -74,10 +67,10 @@ def main():
                 pc[i][j][1] = cloud[j][1]
                 pc[i][j][2] = cloud[j][2]
             except:
-                print('w')
+                print('ERROR')
             
             
-    np.savez('../../data/coal/coal.npz', pc=pc)
+    np.savez('../../data/coal/coal_template.npz', pc=pc)
     
  
 if __name__ == '__main__':
