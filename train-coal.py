@@ -4,6 +4,7 @@ import os
 import time
 import sys
 import numpy as np
+from sklearn.neighbors import KDTree
 import torch
 import torch.utils.data
 from torch.utils.data.dataloader import default_collate
@@ -18,6 +19,33 @@ from scheduler import WarmupMultiStepLR
 
 from datasets.coal_label import *
 import models.coal as Models
+
+class DisMeasure:
+    def __init__(self, sourceClouds):
+        self.sourceClouds = sourceClouds
+
+    def match_by_hausdorffdis(self, inCloud):
+        
+        rng = np.random.RandomState(0)
+        X = rng.random_sample((10, 3))
+    
+        tree = KDTree(inCloud)
+        mindis = 999
+        for i, sourceCloud in enumerate(self.sourceClouds):
+            hausdis = 0
+            for point in sourceCloud:
+                point = point.reshape(1, -1)
+                dist, _ = tree.query(point, k=1)
+            
+                if dist > hausdis:
+                    hausdis = dist
+    
+            if mindis > hausdis:
+                mindis = hausdis
+                minindex = i
+    
+        return i
+        
 
 def save_ply(points, colors, filename):
     with open(filename, 'w') as f:
@@ -34,22 +62,38 @@ def save_ply(points, colors, filename):
         for i in range(points.shape[0]):
             f.write('%f %f %f %d %d %d\n' % (points[i, 0], points[i, 1], points[i, 2], colors[i][0], colors[i][1], colors[i][2]))
 
-def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, device, epoch, print_freq):
+def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, device, epoch, print_freq, disMeasure):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
 
     header = 'Epoch: [{}]'.format(epoch)
     for pc1, rgb1, label1, index in metric_logger.log_every(data_loader, print_freq, header):
+        
+        template_pres = []
+        for clip in pc1:
+            clip_pre = []
+            for pc in clip:
+                template_pre = disMeasure.match_by_hausdorffdis(pc)
+                clip_pre.append(template_pre)
+            template_pres.append(clip_pre)
+        template_pres = torch.tensor(template_pres).to(device)
+        criterion_template = nn.CrossEntropyLoss(weight=torch.ones(8).to(device), reduction='none')
+            
+        
         start_time = time.time()
 
         pc1, rgb1, label1 = pc1.to(device), rgb1.to(device), label1.to(device)
-        output1 = model(pc1, rgb1).transpose(1, 2)
+        output1, template_out = model(pc1, rgb1)
+        output1 = output1.transpose(1, 2)
         loss1 = criterion(output1, label1)
+        template_loss = criterion_template(template_out, template_pres)
         weight = (-label1 + 1) * 79.0 + 1 # 40:1
         loss1 = torch.sum(loss1 * weight) / (label1.shape[0] * label1.shape[1] * label1.shape[2])
+        template_loss = torch.sum(template_loss) / (template_out.shape[0] * template_out.shape[1])
         optimizer.zero_grad() 
-        loss1.backward()
+        loss1.backward(retain_graph=True)
+        template_loss.backward()
         optimizer.step()
 
         metric_logger.update(loss=loss1.item(), lr=optimizer.param_groups[0]["lr"])
@@ -85,6 +129,10 @@ def main(args):
             num_points=args.num_points,
             train=True
     )
+    
+    templates = np.load(os.path.join(args.data_path, 'coal_template.npz'))['pc']
+    disMeasure = DisMeasure(templates)
+    templates = torch.tensor(templates).to(device)
 
     print("Creating data loaders")
 
@@ -93,7 +141,7 @@ def main(args):
     print("Creating model")
     
     Model = getattr(Models, args.model)
-    model = Model(radius=args.radius, nsamples=args.nsamples, num_classes=2)
+    model = Model(templates, radius=args.radius, nsamples=args.nsamples, num_classes=2)
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
@@ -124,7 +172,7 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        train_one_epoch(model, criterion_train, optimizer, lr_scheduler, data_loader, device, epoch, args.print_freq)
+        train_one_epoch(model, criterion_train, optimizer, lr_scheduler, data_loader, device, epoch, args.print_freq, disMeasure)
 
         if args.output_dir:
             output_dir = args.output_dir

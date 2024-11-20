@@ -8,8 +8,6 @@ class CoalLabelDataset(Dataset):
     def __init__(self, root='data/coal', meta='data/train_raw.txt', frames_per_clip=3, num_points=16384, train=False):
         super(CoalLabelDataset, self).__init__()
         
-        # just for test now
-        
         self.num_points = num_points
         self.train = train
         self.root = root

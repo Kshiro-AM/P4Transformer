@@ -15,8 +15,11 @@ from point_4d_convolution import *
 from transformer import *
 
 class P4Transformer(nn.Module):
-    def __init__(self, radius=0.9, nsamples=3*3, num_classes=12):
+    def __init__(self, templates, radius=0.9, nsamples=3*3, num_classes=12):
+        
         super(P4Transformer, self).__init__()
+        
+        self.templates = templates.to(torch.float32)
 
         self.conv1 = P4DConv(in_planes=3,
                              mlp_planes=[32,64,128],
@@ -60,6 +63,16 @@ class P4Transformer(nn.Module):
 
         self.emb_relu = nn.ReLU()
         self.transformer = Transformer(dim=1024, depth=2, heads=4, dim_head=256, mlp_dim=1024)
+        
+        self.templateConv = TemplateConv(in_planes=3,
+                            mlp_planes=[32,64,128],
+                            mlp_batch_norm=[True, True, True],
+                            mlp_activation=[True, True, True],
+                            spatial_kernel_size=[radius, nsamples],
+                            temporal_kernel_size=1,
+                            spatial_stride=4,
+                            temporal_stride=1,
+                            temporal_padding=[0,0])
 
         self.deconv4 = P4DTransConv(in_planes=1024,
                                     mlp_planes=[256, 256],
@@ -86,7 +99,17 @@ class P4Transformer(nn.Module):
                                     original_planes=3)
 
         self.outconv = nn.Conv2d(in_channels=128, out_channels=2, kernel_size=1, stride=1, padding=0)
+        
+        self.templateout = nn.Conv2d(in_channels=256, out_channels=8, kernel_size=1, stride=1, padding=0)
+        self.templateout2 = nn.Conv2d(in_channels=16384, out_channels=512, kernel_size=1, stride=1, padding=0)
 
+        self.mlp = nn.Sequential(
+            nn.LayerNorm(512),
+            nn.Linear(512, 64),
+            nn.GELU(),
+            nn.Linear(64, 1),
+        )
+        
     def forward(self, xyzs, rgbs):
 
         new_xyzs1, new_features1 = self.conv1(xyzs, rgbs)
@@ -109,7 +132,7 @@ class P4Transformer(nn.Module):
 
         features = torch.reshape(input=features, shape=(B, L, N, features.shape[2]))                                                        # [B, L, n2, C]
         features = features.permute(0, 1, 3, 2)
-
+        
         new_features4 = features
         new_xyzsd4, new_featuresd4 = self.deconv4(new_xyzs4, new_xyzs3, new_features4, new_features3)
 
@@ -120,6 +143,20 @@ class P4Transformer(nn.Module):
         new_xyzsd1, new_featuresd1 = self.deconv1(new_xyzsd2, xyzs, new_featuresd2, rgbs)
 
         out = self.outconv(new_featuresd1.transpose(1,2)).transpose(1,2)
+        
+        # TemplateNet
+        template_features = torch.zeros_like(self.templates)
+        template_features = template_features.permute(0, 2, 1)
+        new_template_xyzs, new_tempalte_features = self.templateConv(self.templates, template_features)
+        
+        new_featuresd = self.templateout2(new_featuresd1.transpose(1, 3)).transpose(1, 3)
+        
+        new_tempalte_features_expanded = new_tempalte_features.expand(8, 3, -1, -1)
+        
+        template_conv_in = torch.cat((new_featuresd, new_tempalte_features_expanded), dim=2)
+        template_mlp_out = self.templateout(template_conv_in.transpose(1,2)).transpose(1,2)
+        
+        template_out = self.mlp(template_mlp_out).squeeze().permute(0, 2, 1)
 
-        return out
+        return out, template_out
 
