@@ -5,6 +5,7 @@ import time
 import sys
 import numpy as np
 from sklearn.neighbors import KDTree
+from torch_kdtree import build_kd_tree
 import torch
 import torch.utils.data
 from torch.utils.data.dataloader import default_collate
@@ -22,23 +23,17 @@ import models.coal as Models
 
 class DisMeasure:
     def __init__(self, sourceClouds):
-        self.sourceClouds = sourceClouds
+        self.sourceClouds = sourceClouds.to(torch.float32)
 
     def match_by_hausdorffdis(self, inCloud):
         
-        rng = np.random.RandomState(0)
-        X = rng.random_sample((10, 3))
-    
-        tree = KDTree(inCloud)
+        tree = build_kd_tree(inCloud)
+        
         mindis = 999
         for i, sourceCloud in enumerate(self.sourceClouds):
             hausdis = 0
-            for point in sourceCloud:
-                point = point.reshape(1, -1)
-                dist, _ = tree.query(point, k=1)
-            
-                if dist > hausdis:
-                    hausdis = dist
+            dists, _ = tree.query(sourceCloud, nr_nns_searches=1)
+            hausdis = max(dists)
     
             if mindis > hausdis:
                 mindis = hausdis
@@ -67,17 +62,22 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
 
+    cor = 0    
+    total = 0
+
     header = 'Epoch: [{}]'.format(epoch)
-    for pc1, rgb1, label1, index in metric_logger.log_every(data_loader, print_freq, header):
+    for pc1, rgb1, label1, template_vals, index in metric_logger.log_every(data_loader, print_freq, header):
         
-        template_pres = []
-        for clip in pc1:
-            clip_pre = []
-            for pc in clip:
-                template_pre = disMeasure.match_by_hausdorffdis(pc)
-                clip_pre.append(template_pre)
-            template_pres.append(clip_pre)
-        template_pres = torch.tensor(template_pres).to(device)
+        template_vals = template_vals.to(device)
+        template_vals = template_vals.squeeze()
+        # template_vals = []
+        # for clip in pc1:
+        #     clip_pre = []
+        #     for pc in clip:
+        #         template_pre = disMeasure.match_by_hausdorffdis(pc.to(device))
+        #         clip_pre.append(template_pre)
+        #     template_vals.append(clip_pre)
+        # template_vals = torch.tensor(template_vals).to(device)
         criterion_template = nn.CrossEntropyLoss(weight=torch.ones(8).to(device), reduction='none')
             
         
@@ -87,7 +87,12 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
         output1, template_out = model(pc1, rgb1)
         output1 = output1.transpose(1, 2)
         loss1 = criterion(output1, label1)
-        template_loss = criterion_template(template_out, template_pres)
+        template_loss = criterion_template(template_out, template_vals)
+        _, template_choice = torch.max(template_out, dim=1)
+        
+        cor = cor + torch.sum(template_choice == template_vals)
+        total = total + 24
+        
         weight = (-label1 + 1) * 79.0 + 1 # 40:1
         loss1 = torch.sum(loss1 * weight) / (label1.shape[0] * label1.shape[1] * label1.shape[2])
         template_loss = torch.sum(template_loss) / (template_out.shape[0] * template_out.shape[1])
@@ -99,6 +104,9 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
         metric_logger.update(loss=loss1.item(), lr=optimizer.param_groups[0]["lr"])
         lr_scheduler.step()
         sys.stdout.flush()
+    
+    acc = cor / total
+    print("acc: {}".format(acc))
 
 def main(args):
 
@@ -131,8 +139,8 @@ def main(args):
     )
     
     templates = np.load(os.path.join(args.data_path, 'coal_template.npz'))['pc']
-    disMeasure = DisMeasure(templates)
     templates = torch.tensor(templates).to(device)
+    disMeasure = DisMeasure(templates)
 
     print("Creating data loaders")
 

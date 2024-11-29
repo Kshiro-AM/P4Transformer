@@ -151,7 +151,7 @@ class P4Transformer(nn.Module):
         
         new_featuresd = self.templateout2(new_featuresd1.transpose(1, 3)).transpose(1, 3)
         
-        new_tempalte_features_expanded = new_tempalte_features.expand(8, 3, -1, -1)
+        new_tempalte_features_expanded = new_tempalte_features.expand(new_featuresd.size()[0], 3, -1, -1)
         
         template_conv_in = torch.cat((new_featuresd, new_tempalte_features_expanded), dim=2)
         template_mlp_out = self.templateout(template_conv_in.transpose(1,2)).transpose(1,2)

@@ -1,9 +1,29 @@
 import os
 import numpy as np
 import open3d as o3d
-import torch
+from sklearn.neighbors import KDTree
 
 from enum import Enum
+
+class DisMeasure:
+    def __init__(self, sourceClouds):
+        self.sourceClouds = sourceClouds
+
+    def match_by_hausdorffdis(self, inCloud):
+        
+        tree = KDTree(inCloud)
+        
+        mindis = 999
+        for i, sourceCloud in enumerate(self.sourceClouds):
+            hausdis = 0
+            dists, _ = tree.query(sourceCloud, k=1)
+            hausdis = max(dists)
+    
+            if mindis > hausdis:
+                mindis = hausdis
+                minindex = i
+    
+        return minindex
 
 def save_ply(points, colors, filename, pred):
     with open(filename, 'w') as f:
@@ -121,7 +141,11 @@ def main():
     
     point_size = 16384
     
+    templates = np.load(os.path.join('../../data/coal/', 'coal_template.npz'))['pc']
+    disMeasure = DisMeasure(templates)
+    
     pc = np.zeros(shape=[len(file_list), point_size, 3]) # frame, point size, xyz
+    pre = np.zeros(shape=[len(file_list)], dtype=np.int32) # frame
     label = np.zeros(shape=[len(file_list), point_size], dtype=np.int32) # frame, point size
     for i, file in enumerate(file_list):
         print('Processing: ', file)
@@ -155,9 +179,11 @@ def main():
             label[i] = label[i][sort_idx]
             pc[i] = pc[i][sort_idx]
             
+        pre[i] = disMeasure.match_by_hausdorffdis(pc[i])
+        
         # save_ply(points[idxs], np.zeros_like(points[idxs]), file.replace('.ply', '_downsampled.ply').replace('/ply/', '/temp/'), labels[idxs])
             
-    np.savez('../../data/coal/coal_labeled.npz', pc=pc, label=label)
+    np.savez('../../data/coal/coal_labeled.npz', pc=pc, label=label, pre=pre)
     
  
 if __name__ == '__main__':

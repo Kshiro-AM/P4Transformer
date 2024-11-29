@@ -20,6 +20,7 @@ class CoalDataset(Dataset):
         self.meta = []
         self.data = np.load(os.path.join(root, 'coal.npz'))
         self.pc = self.data['pc']
+        self.pre = self.data['pre']
         
     def __getitem__(self, index):
 
@@ -29,8 +30,10 @@ class CoalDataset(Dataset):
 
         rgb = np.zeros_like(clip)
         rgb = np.swapaxes(rgb, 1, 2)
+        
+        pre = np.dstack((self.pre[index], self.pre[index+1], self.pre[index+2]))
 
-        return clip.astype(np.float32), rgb.astype(np.float32), index
+        return clip.astype(np.float32), rgb.astype(np.float32), pre.astype(np.int64), index
     
     def __len__(self):
         return self.data['pc'].shape[0] - 2

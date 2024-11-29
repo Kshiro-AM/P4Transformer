@@ -4,6 +4,8 @@ import os
 import time
 import sys
 import numpy as np
+from sklearn.neighbors import KDTree
+from torch_kdtree import build_kd_tree
 import torch
 import torch.utils.data
 from torch.utils.data.dataloader import default_collate
@@ -18,6 +20,26 @@ from scheduler import WarmupMultiStepLR
 
 from datasets.coal import *
 import models.coal as Models
+
+class DisMeasure:
+    def __init__(self, sourceClouds):
+        self.sourceClouds = sourceClouds.to(torch.float32)
+
+    def match_by_hausdorffdis(self, inCloud):
+        
+        tree = build_kd_tree(inCloud)
+        
+        mindis = 999
+        for i, sourceCloud in enumerate(self.sourceClouds):
+            hausdis = 0
+            dists, _ = tree.query(sourceCloud, nr_nns_searches=1)
+            hausdis = max(dists)
+    
+            if mindis > hausdis:
+                mindis = hausdis
+                minindex = i
+    
+        return minindex
 
 def save_ply(points, colors, filename, pred):
     with open(filename, 'w') as f:
@@ -35,7 +57,7 @@ def save_ply(points, colors, filename, pred):
         for i in range(points.shape[0]):
             f.write('%f %f %f %d %d %d %d\n' % (points[i, 0], points[i, 1], points[i, 2], colors[i][0], colors[i][1], colors[i][2], pred[i]))
 
-def evaluate(model, criterion, data_loader, device, print_freq, output_dir=None):
+def evaluate(model, criterion, data_loader, device, print_freq, disMeasure, output_dir=None):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -46,20 +68,44 @@ def evaluate(model, criterion, data_loader, device, print_freq, output_dir=None)
         for j in range(20):
             color.append(np.random.randint(0, 255, 3))
             
-        for pc, rgb, index in metric_logger.log_every(data_loader, print_freq, header):
+        cor = 0    
+        total = 0
             
-            pc, rgb = pc.to(device), rgb.to(device)
-            output1 = model(pc, rgb).transpose(1, 2)
-            output1 = output1.cpu().numpy()
+        for pc1, rgb, template_vals, index in metric_logger.log_every(data_loader, print_freq, header):
+            
+            template_vals = template_vals.to(device)
+            template_vals = template_vals.squeeze()
+            # template_vals = []
+            # for clip in pc1:
+            #     clip_pre = []
+            #     for pc in clip:
+            #         template_pre = disMeasure.match_by_hausdorffdis(pc.to(device))
+            #         clip_pre.append(template_pre)
+            #     template_vals.append(clip_pre)
+            # template_vals = torch.tensor(template_vals).to(device)
+            criterion_template = nn.CrossEntropyLoss(weight=torch.ones(8).to(device), reduction='none')
+            
+            pc1, rgb = pc1.to(device), rgb.to(device)
+            output1, template_out = model(pc1, rgb)
+            output1 = output1.transpose(1, 2).cpu().numpy()
             pred1 = np.argmax(output1, 1) # BxTxN
+            
+            _, template_choice = torch.max(template_out, dim=1)
+            cor = cor + torch.sum(template_choice == template_vals)
+            if cor != 0:
+                pass
+            total = total + 24
                 
-            for j in range(pc.shape[0]):
-                for k in range(pc.shape[1]):
+            for j in range(pc1.shape[0]):
+                for k in range(pc1.shape[1]):
                     file_name = os.path.join(output_dir, 'index{}_batch{}_{}_time{}.ply'.format(str(index[j].detach().numpy()).zfill(4), i, j, k))
                     c = [color[idx] for idx in pred1[j][k][:]]
-                    save_ply(pc[j][k][:][:].cpu().numpy(), c, file_name, pred=pred1[j][k][:])
+                    save_ply(pc1[j][k][:][:].cpu().numpy(), c, file_name, pred=pred1[j][k][:])
 
             i += 1
+            
+        acc = cor / total
+        print("acc: {}".format(acc))
 
 def main(args):
     if args.output_dir:
@@ -89,6 +135,10 @@ def main(args):
             num_points=args.num_points,
             train=True
     )
+    
+    templates = np.load(os.path.join(args.data_path, 'coal_template.npz'))['pc']
+    templates = torch.tensor(templates).to(device)
+    disMeasure = DisMeasure(templates)
 
     print("Creating data loaders")
 
@@ -97,7 +147,7 @@ def main(args):
     print("Creating model")
     
     Model = getattr(Models, args.model)
-    model = Model(radius=args.radius, nsamples=args.nsamples, num_classes=2)
+    model = Model(templates, radius=args.radius, nsamples=args.nsamples, num_classes=2)
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
@@ -131,7 +181,7 @@ def main(args):
 
         if args.output_dir:
             output_dir = args.output_dir
-        evaluate(model, None, data_loader, device=device, print_freq=args.print_freq, output_dir=output_dir)
+        evaluate(model, None, data_loader, disMeasure=disMeasure, device=device, print_freq=args.print_freq, output_dir=output_dir)
 
         if args.output_dir:
             output_dir = args.output_dir

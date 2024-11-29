@@ -68,6 +68,7 @@ def main():
                 pc[i][j][2] = cloud[j][2]
             except:
                 print('ERROR')
+        
             
             
     np.savez('../../data/coal/coal_template.npz', pc=pc)

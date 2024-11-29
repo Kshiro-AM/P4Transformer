@@ -1,9 +1,29 @@
 import os
 import numpy as np
 from enum import Enum
+from sklearn.neighbors import KDTree
 
 import open3d as o3d
 
+class DisMeasure:
+    def __init__(self, sourceClouds):
+        self.sourceClouds = sourceClouds
+
+    def match_by_hausdorffdis(self, inCloud):
+        
+        tree = KDTree(inCloud)
+        
+        mindis = 999
+        for i, sourceCloud in enumerate(self.sourceClouds):
+            hausdis = 0
+            dists, _ = tree.query(sourceCloud, k=1)
+            hausdis = max(dists)
+    
+            if mindis > hausdis:
+                mindis = hausdis
+                minindex = i
+    
+        return minindex
 
 class DatasetType(Enum):
     train = 0
@@ -59,7 +79,11 @@ def main():
     
     point_size = 16384
     
+    templates = np.load(os.path.join('../../data/coal/', 'coal_template.npz'))['pc']
+    disMeasure = DisMeasure(templates)
+    
     pc = np.zeros(shape=[len(file_list), point_size, 3]) # frame, point size, xyz
+    pre = np.zeros(shape=[len(file_list)], dtype=np.int32) # frame
     label = np.zeros(shape=[len(file_list), point_size], dtype=np.int32) # frame, point size
     for i, file in enumerate(file_list):
         print('Processing: ', file)
@@ -74,10 +98,12 @@ def main():
                 pc[i][j][1] = cloud[j][1]
                 pc[i][j][2] = cloud[j][2]
             except:
-                print('w')
+                print('error')
+                
+        pre[i] = disMeasure.match_by_hausdorffdis(pc[i])
+          
             
-            
-    np.savez('../../data/coal/coal.npz', pc=pc)
+    np.savez('../../data/coal/coal.npz', pc=pc, pre=pre)
     
  
 if __name__ == '__main__':
