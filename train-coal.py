@@ -39,7 +39,7 @@ class DisMeasure:
                 mindis = hausdis
                 minindex = i
     
-        return i
+        return mindis, minindex
         
 
 def save_ply(points, colors, filename):
@@ -57,7 +57,7 @@ def save_ply(points, colors, filename):
         for i in range(points.shape[0]):
             f.write('%f %f %f %d %d %d\n' % (points[i, 0], points[i, 1], points[i, 2], colors[i][0], colors[i][1], colors[i][2]))
 
-def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, device, epoch, print_freq, disMeasure):
+def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, device, epoch, print_freq, disMeasure, train_p4t, train_tempalteNet, templates):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
@@ -70,6 +70,8 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
         
         template_vals = template_vals.to(device)
         template_vals = template_vals.squeeze()
+        
+        _, template_pres = torch.min(template_vals, dim=1)
         # template_vals = []
         # for clip in pc1:
         #     clip_pre = []
@@ -79,26 +81,32 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
         #     template_vals.append(clip_pre)
         # template_vals = torch.tensor(template_vals).to(device)
         criterion_template = nn.CrossEntropyLoss(weight=torch.ones(8).to(device), reduction='none')
+        mse_template = nn.MSELoss()
             
         
         start_time = time.time()
 
-        pc1, rgb1, label1 = pc1.to(device), rgb1.to(device), label1.to(device)
-        output1, template_out = model(pc1, rgb1)
+        pc1, rgb1, label1, templates = pc1.to(device), rgb1.to(device), label1.to(device), templates.to(device).to(torch.float32)
+        output1, template_out = model(pc1, rgb1, templates)
         output1 = output1.transpose(1, 2)
         loss1 = criterion(output1, label1)
-        template_loss = criterion_template(template_out, template_vals)
-        _, template_choice = torch.max(template_out, dim=1)
         
-        cor = cor + torch.sum(template_choice == template_vals)
+        # template_loss = criterion_template(template_out, template_vals)
+        template_loss = mse_template(template_vals, template_out)
+        
+        _, template_choice = torch.min(template_out, dim=1)
+        
+        cor = cor + torch.sum(template_choice == template_pres)
         total = total + 24
         
         weight = (-label1 + 1) * 79.0 + 1 # 40:1
         loss1 = torch.sum(loss1 * weight) / (label1.shape[0] * label1.shape[1] * label1.shape[2])
-        template_loss = torch.sum(template_loss) / (template_out.shape[0] * template_out.shape[1])
+        # template_loss = torch.sum(template_loss) / (template_out.shape[0] * template_out.shape[1])
         optimizer.zero_grad() 
-        loss1.backward(retain_graph=True)
-        template_loss.backward()
+        if(train_p4t):
+            loss1.backward(retain_graph=True)
+        if(train_tempalteNet):
+            template_loss.backward()
         optimizer.step()
 
         metric_logger.update(loss=loss1.item(), lr=optimizer.param_groups[0]["lr"])
@@ -132,6 +140,7 @@ def main(args):
 
     dataset = CoalLabelDataset(
             root=args.data_path,
+            file=args.data_file,
             meta=args.data_train,
             frames_per_clip=args.clip_len,
             num_points=args.num_points,
@@ -139,7 +148,7 @@ def main(args):
     )
     
     templates = np.load(os.path.join(args.data_path, 'coal_template.npz'))['pc']
-    templates = torch.tensor(templates).to(device)
+    templates = torch.tensor(templates)
     disMeasure = DisMeasure(templates)
 
     print("Creating data loaders")
@@ -149,7 +158,7 @@ def main(args):
     print("Creating model")
     
     Model = getattr(Models, args.model)
-    model = Model(templates, radius=args.radius, nsamples=args.nsamples, num_classes=2)
+    model = Model(radius=args.radius, nsamples=args.nsamples, num_classes=2)
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
@@ -180,7 +189,7 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        train_one_epoch(model, criterion_train, optimizer, lr_scheduler, data_loader, device, epoch, args.print_freq, disMeasure)
+        train_one_epoch(model, criterion_train, optimizer, lr_scheduler, data_loader, device, epoch, args.print_freq, disMeasure, args.train_p4t, args.train_templateNet, templates)
 
         if args.output_dir:
             output_dir = args.output_dir
@@ -206,6 +215,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Transformer Model Training')
 
     parser.add_argument('--data-path', default='/scratch/HeheFan-data/Synthia4D/sequences', help='data path')
+    parser.add_argument('--data-file', default='coal.npz')
     parser.add_argument('--data-train', default='/scratch/HeheFan-data/Synthia4D/trainval_raw.txt', help='meta list for training')
     parser.add_argument('--data-eval', default='/scratch/HeheFan-data/Synthia4D/test_raw.txt', help='meta list for test')
     parser.add_argument('--label-weight', default='/scratch/HeheFan-data/Synthia4D/labelweights.npz', help='training label weights')
@@ -237,6 +247,9 @@ def parse_args():
     parser.add_argument('--lr-milestones', nargs='+', default=[30, 40, 50], type=int, help='decrease lr on milestones')
     parser.add_argument('--lr-gamma', default=0.1, type=float, help='decrease lr by a factor of lr-gamma')
     parser.add_argument('--lr-warmup-epochs', default=10, type=int, help='number of warmup epochs')
+    # training type
+    parser.add_argument('--train-p4t', default=True, action='store_true', help='enable p4t training')
+    parser.add_argument('--train-templateNet', default=True, action='store_false', help='enable templateNet training')
     # output
     parser.add_argument('--print-freq', default=10, type=int, help='print frequency')
     parser.add_argument('--output-dir', default='', type=str, help='path where to save')

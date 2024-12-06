@@ -57,7 +57,7 @@ def save_ply(points, colors, filename, pred):
         for i in range(points.shape[0]):
             f.write('%f %f %f %d %d %d %d\n' % (points[i, 0], points[i, 1], points[i, 2], colors[i][0], colors[i][1], colors[i][2], pred[i]))
 
-def evaluate(model, criterion, data_loader, device, print_freq, disMeasure, output_dir=None):
+def evaluate(model, criterion, data_loader, device, print_freq, disMeasure, templates, output_dir=None):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -75,6 +75,8 @@ def evaluate(model, criterion, data_loader, device, print_freq, disMeasure, outp
             
             template_vals = template_vals.to(device)
             template_vals = template_vals.squeeze()
+        
+            _, template_pres = torch.max(template_vals, dim=1)
             # template_vals = []
             # for clip in pc1:
             #     clip_pre = []
@@ -85,13 +87,13 @@ def evaluate(model, criterion, data_loader, device, print_freq, disMeasure, outp
             # template_vals = torch.tensor(template_vals).to(device)
             criterion_template = nn.CrossEntropyLoss(weight=torch.ones(8).to(device), reduction='none')
             
-            pc1, rgb = pc1.to(device), rgb.to(device)
-            output1, template_out = model(pc1, rgb)
+            pc1, rgb, templates = pc1.to(device), rgb.to(device), templates.to(device).to(torch.float32)
+            output1, template_out = model(pc1, rgb, templates)
             output1 = output1.transpose(1, 2).cpu().numpy()
             pred1 = np.argmax(output1, 1) # BxTxN
             
             _, template_choice = torch.max(template_out, dim=1)
-            cor = cor + torch.sum(template_choice == template_vals)
+            cor = cor + torch.sum(template_choice == template_pres)
             if cor != 0:
                 pass
             total = total + 24
@@ -147,7 +149,7 @@ def main(args):
     print("Creating model")
     
     Model = getattr(Models, args.model)
-    model = Model(templates, radius=args.radius, nsamples=args.nsamples, num_classes=2)
+    model = Model(radius=args.radius, nsamples=args.nsamples, num_classes=2)
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
@@ -181,7 +183,7 @@ def main(args):
 
         if args.output_dir:
             output_dir = args.output_dir
-        evaluate(model, None, data_loader, disMeasure=disMeasure, device=device, print_freq=args.print_freq, output_dir=output_dir)
+        evaluate(model, None, data_loader, disMeasure=disMeasure, device=device, print_freq=args.print_freq, output_dir=output_dir, templates=templates)
 
         if args.output_dir:
             output_dir = args.output_dir

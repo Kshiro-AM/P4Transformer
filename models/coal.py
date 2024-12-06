@@ -15,12 +15,10 @@ from point_4d_convolution import *
 from transformer import *
 
 class P4Transformer(nn.Module):
-    def __init__(self, templates, radius=0.9, nsamples=3*3, num_classes=12):
+    def __init__(self, radius=0.9, nsamples=3*3, num_classes=12):
         
         super(P4Transformer, self).__init__()
         
-        self.templates = templates.to(torch.float32)
-
         self.conv1 = P4DConv(in_planes=3,
                              mlp_planes=[32,64,128],
                              mlp_batch_norm=[True, True, True],
@@ -110,7 +108,9 @@ class P4Transformer(nn.Module):
             nn.Linear(64, 1),
         )
         
-    def forward(self, xyzs, rgbs):
+    def forward(self, xyzs, rgbs, templates):
+        
+        device = xyzs.get_device()
 
         new_xyzs1, new_features1 = self.conv1(xyzs, rgbs)
 
@@ -145,10 +145,12 @@ class P4Transformer(nn.Module):
         out = self.outconv(new_featuresd1.transpose(1,2)).transpose(1,2)
         
         # TemplateNet
-        template_features = torch.zeros_like(self.templates)
-        template_features = template_features.permute(0, 2, 1)
-        new_template_xyzs, new_tempalte_features = self.templateConv(self.templates, template_features)
         
+        template_features = torch.zeros_like(templates, device=device)
+        template_features = template_features.permute(0, 2, 1)
+        new_template_xyzs, new_tempalte_features = self.templateConv(templates, template_features)
+        
+        new_featuresd1 = new_featuresd1.detach()
         new_featuresd = self.templateout2(new_featuresd1.transpose(1, 3)).transpose(1, 3)
         
         new_tempalte_features_expanded = new_tempalte_features.expand(new_featuresd.size()[0], 3, -1, -1)

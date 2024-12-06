@@ -5,7 +5,7 @@ from pyquaternion import Quaternion
 from torch.utils.data import Dataset
 
 class CoalLabelDataset(Dataset):
-    def __init__(self, root='data/coal', meta='data/train_raw.txt', frames_per_clip=3, num_points=16384, train=False):
+    def __init__(self, root='data/coal', file='coal_labeled.npz', meta='data/train_raw.txt', frames_per_clip=3, num_points=16384, train=False):
         super(CoalLabelDataset, self).__init__()
         
         self.num_points = num_points
@@ -16,7 +16,7 @@ class CoalLabelDataset(Dataset):
         self.labelweights = np.ones(2, dtype=np.float32)
         
         self.meta = []
-        self.data = np.load(os.path.join(root, 'coal_labeled.npz'))
+        self.data = np.load(os.path.join(root, file))
         
         self.label = self.data['label']
         self.pc = self.data['pc']
@@ -42,7 +42,7 @@ class CoalLabelDataset(Dataset):
         
         pre = np.dstack((self.pre[index], self.pre[index+1], self.pre[index+2]))
 
-        return clip.astype(np.float32), rgb.astype(np.float32), label.astype(np.int64), pre.astype(np.int64), index
+        return clip.astype(np.float32), rgb.astype(np.float32), label.astype(np.int64), pre.astype(np.float32), index
     
     def __len__(self):
         return self.pc.shape[0] - 2

@@ -13,17 +13,14 @@ class DisMeasure:
         
         tree = KDTree(inCloud)
         
-        mindis = 999
+        dis = []
         for i, sourceCloud in enumerate(self.sourceClouds):
             hausdis = 0
             dists, _ = tree.query(sourceCloud, k=1)
             hausdis = max(dists)
-    
-            if mindis > hausdis:
-                mindis = hausdis
-                minindex = i
-    
-        return minindex
+            dis.append(hausdis)
+            
+        return np.array(dis).squeeze()
 
 def save_ply(points, colors, filename, pred):
     with open(filename, 'w') as f:
@@ -145,7 +142,7 @@ def main():
     disMeasure = DisMeasure(templates)
     
     pc = np.zeros(shape=[len(file_list), point_size, 3]) # frame, point size, xyz
-    pre = np.zeros(shape=[len(file_list)], dtype=np.int32) # frame
+    pre = np.zeros(shape=[len(file_list), len(templates)], dtype=np.float32) # frame, template num
     label = np.zeros(shape=[len(file_list), point_size], dtype=np.int32) # frame, point size
     for i, file in enumerate(file_list):
         print('Processing: ', file)
