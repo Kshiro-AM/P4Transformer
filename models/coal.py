@@ -98,6 +98,9 @@ class P4Transformer(nn.Module):
 
         self.outconv = nn.Conv2d(in_channels=128, out_channels=2, kernel_size=1, stride=1, padding=0)
         
+        self.connectoutconv1 = nn.Conv2d(in_channels=512, out_channels=16384, kernel_size=1, stride=1, padding=0)
+        self.connectoutconv2 = nn.Conv2d(in_channels=256, out_channels=2, kernel_size=1, stride=1, padding=0)
+        
         self.templateout = nn.Conv2d(in_channels=256, out_channels=8, kernel_size=1, stride=1, padding=0)
         self.templateout2 = nn.Conv2d(in_channels=16384, out_channels=512, kernel_size=1, stride=1, padding=0)
 
@@ -159,6 +162,11 @@ class P4Transformer(nn.Module):
         template_mlp_out = self.templateout(template_conv_in.transpose(1,2)).transpose(1,2)
         
         template_out = self.mlp(template_mlp_out).squeeze().permute(0, 2, 1)
+        
+        # conncet out
+        
+        final_out = self.connectoutconv1(template_conv_in.transpose(1,3)).transpose(1,3)
+        final_out = self.connectoutconv2(final_out.transpose(1,2)).transpose(1,2)
 
-        return out, template_out
+        return out, template_out, final_out
 

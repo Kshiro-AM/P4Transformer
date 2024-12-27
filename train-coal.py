@@ -87,9 +87,13 @@ def train_one_epoch(model, criterion, optimizer, lr_scheduler, data_loader, devi
         start_time = time.time()
 
         pc1, rgb1, label1, templates = pc1.to(device), rgb1.to(device), label1.to(device), templates.to(device).to(torch.float32)
-        output1, template_out = model(pc1, rgb1, templates)
+        output1, template_out, connect_out = model(pc1, rgb1, templates)
         output1 = output1.transpose(1, 2)
-        loss1 = criterion(output1, label1)
+        connect_out = connect_out.transpose(1, 2)
+        
+        # choose output
+        out = output1
+        loss1 = criterion(out, label1)
         
         # template_loss = criterion_template(template_out, template_vals)
         template_loss = mse_template(template_vals, template_out)

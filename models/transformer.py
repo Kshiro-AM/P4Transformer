@@ -64,6 +64,35 @@ class Attention(nn.Module):
         out =  self.to_out(out)
         return out
 
+class CrossAttention(nn.Module):
+    def __init__(self, dim, heads = 8):
+        super().__init__()
+        
+        self.dim = dim
+        self.heads = heads
+        self.scale = dim ** -0.5
+        
+        self.query = nn.Linear(dim, dim)
+        self.key = nn.Linear(dim, dim)
+        self.value = nn.Linear(dim, dim)
+        
+    def forward(self, queries, keys, values, mask = None):
+        b, n, _, h = *queries.shape, self.heads
+        
+        queries = rearrange(queries, 'b n (h d) -> b h n d', h = h)
+        keys = rearrange(keys, 'b n (h d) -> b h n d', h = h)
+        values = rearrange(values, 'b n (h d) -> b h n d', h = h)
+        
+        dots = torch.einsum('b h i d , b h j d -> b h i j', queries, keys) * self.scale
+        
+        attn = dots.softmax(dim=-1)
+        
+        out = torch.einsum('b h i j ,b h j d -> b h i d', attn, values)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        
+        out = out.transpose(1, 2).contiguous().view(b, n, -1)
+        return out
+
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
         super().__init__()
@@ -71,10 +100,13 @@ class Transformer(nn.Module):
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 Residual(PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = 0.))),
+                Residual(PreNorm(dim, CrossAttention(dim, heads = heads))),
                 Residual(PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)))
             ]))
-    def forward(self, x):
-        for attn, ff in self.layers:
+    def forward(self, x, template):
+        for attn, crs_attn, ff in self.layers:
             x = attn(x)
+            x = crs_attn(x, keys=template, values=template)
             x = ff(x)
         return x
+
